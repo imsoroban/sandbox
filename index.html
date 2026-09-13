@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>particle sandbox</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #d4d0c8;
+    color: #000;
+    font-family: system-ui, Tahoma, Arial, sans-serif;
+    font-size: 12px;
+  }
+  #app {
+    display: grid;
+    grid-template-columns: 210px 1fr 230px;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "top top top"
+      "left stage right";
+    height: 100%;
+    gap: 4px;
+    padding: 4px;
+  }
+  #top {
+    grid-area: top;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px;
+    background: #ece9e4;
+    border: 1px solid #888;
+    padding: 4px 8px;
+  }
+  #top span { color: #333; }
+  #top b { color: #000; }
+  .panel {
+    background: #ece9e4;
+    border: 1px solid #888;
+    padding: 6px;
+    overflow-y: auto;
+  }
+  #panel-left { grid-area: left; }
+  #panel-right { grid-area: right; }
+  #stage {
+    grid-area: stage;
+    background: #808080;
+    border: 1px solid #888;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+  #view {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    cursor: crosshair;
+    border: 1px solid #444;
+    background: #000;
+  }
+  fieldset {
+    border: 1px solid #999;
+    margin: 0 0 8px 0;
+    padding: 6px;
+  }
+  legend {
+    font-size: 11px;
+    padding: 0 4px;
+    color: #333;
+  }
+  .elem-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 3px;
+  }
+  .elem-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: #ddd;
+    border: 1px solid #999;
+    color: #000;
+    padding: 4px 2px;
+    cursor: pointer;
+    font-size: 9px;
+    line-height: 1.1;
+  }
+  .elem-btn .swatch {
+    width: 12px;
+    height: 12px;
+    border: 1px solid #555;
+  }
+  .elem-btn:hover { background: #eee; }
+  .elem-btn.active {
+    background: #fff;
+    border: 1px solid #000;
+    font-weight: bold;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin: 3px 0;
+  }
+  .row label { flex: 1; }
+  .row output { width: 34px; text-align: right; }
+  input[type=range] { width: 100%; }
+  select, button, input[type=text] {
+    font-family: inherit;
+    font-size: 11px;
+  }
+  button {
+    background: #ddd;
+    border: 1px solid #888;
+    padding: 4px 6px;
+    cursor: pointer;
+  }
+  button:hover { background: #eee; }
+  button.on {
+    background: #fff;
+    border: 1px solid #000;
+    font-weight: bold;
+  }
+  .btn-row { display: flex; gap: 4px; margin: 3px 0; }
+  .btn-row button { flex: 1; }
+  select { width: 100%; padding: 2px; }
+  .stat-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    padding: 1px 0;
+  }
+  .hint {
+    color: #444;
+    font-size: 10px;
+    line-height: 1.4;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #bbb;
+  }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-thumb { background: #aaa; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span>fps <b id="fpsOut">60</b></span>
+    <span>cells <b id="activeOut">0</b></span>
+    <span>grid <b id="gridOut">200x150</b></span>
+    <span>tick <b id="tickOut">0</b></span>
+  </div>
+
+  <div id="panel-left" class="panel">
+    <fieldset>
+      <legend>Solids</legend>
+      <div class="elem-grid" id="grp-solid"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Liquids</legend>
+      <div class="elem-grid" id="grp-liquid"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Energy / Gas</legend>
+      <div class="elem-grid" id="grp-energy"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Organic / Special</legend>
+      <div class="elem-grid" id="grp-special"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Brush</legend>
+      <div class="row"><label for="brushSize">size</label><output id="brushValOut">3</output></div>
+      <input type="range" id="brushSize" min="1" max="20" value="3">
+      <div class="btn-row">
+        <button id="btnErase">erase</button>
+        <button id="btnClear">clear all</button>
+      </div>
+      <div class="btn-row">
+        <button id="btnPause">pause</button>
+        <button id="btnStep">step</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <div id="stage">
+    <canvas id="view"></canvas>
+  </div>
+
+  <div id="panel-right" class="panel">
+    <fieldset>
+      <legend>Gravity</legend>
+      <div class="btn-row">
+        <button data-g="0">down</button>
+        <button data-g="180">up</button>
+        <button data-g="270">left</button>
+        <button data-g="90">right</button>
+      </div>
+      <button id="btnZeroG" style="width:100%;margin:3px 0;">zero-g</button>
+      <div class="row"><label for="gAngle">angle</label><output id="gAngleOut">0</output></div>
+      <input type="range" id="gAngle" min="0" max="359" value="0">
+      <div class="row"><label for="gStrength">strength</label><output id="gStrengthOut">1.0</output></div>
+      <input type="range" id="gStrength" min="0" max="2" step="0.1" value="1">
+    </fieldset>
+
+    <fieldset>
+      <legend>Weather</legend>
+      <div class="row"><label for="windSlider">wind</label><output id="windOut">0</output></div>
+      <input type="range" id="windSlider" min="-10" max="10" value="0">
+      <div class="row"><label for="heatSlider">heat (- cold / + hot)</label><output id="heatOut">0</output></div>
+      <input type="range" id="heatSlider" min="-10" max="10" value="0">
+      <button id="btnRain" style="width:100%;margin:3px 0;">rain: off</button>
+      <div class="row"><label for="emitterSelect">emitter target</label></div>
+      <select id="emitterSelect"></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Simulation Rates</legend>
+      <div class="row"><label for="simSpeed">speed</label><output id="simSpeedOut">1x</output></div>
+      <input type="range" id="simSpeed" min="0" max="6" step="1" value="2">
+      <div class="row"><label for="fireSpread">fire spread</label><output id="fireSpreadOut">5</output></div>
+      <input type="range" id="fireSpread" min="0" max="100" value="5">
+      <div class="row"><label for="acidCorrode">acid corrosion</label><output id="acidCorrodeOut">2</output></div>
+      <input type="range" id="acidCorrode" min="0" max="100" value="2">
+      <div class="row"><label for="sparkRate">spark conduction</label><output id="sparkRateOut">40</output></div>
+      <input type="range" id="sparkRate" min="0" max="100" value="40">
+      <div class="row"><label for="plantRate">plant growth</label><output id="plantRateOut">1</output></div>
+      <input type="range" id="plantRate" min="0" max="100" value="1">
+      <div class="row"><label for="blastRadius">tnt blast radius</label><output id="blastRadiusOut">6</output></div>
+      <input type="range" id="blastRadius" min="2" max="14" value="6">
+    </fieldset>
+
+    <fieldset>
+      <legend>Stats</legend>
+      <div class="stat-line">selected <b id="selOut">SAND</b></div>
+      <div class="stat-line">gravity <b id="gravOut">down 1.0</b></div>
+    </fieldset>
+
+    <div class="hint">
+      click/drag to paint, right-click or hold e to erase.
+      fire melts sand into glass and stone into lava.
+      acid dissolves anything except boundary walls.
+      lava turns to stone on contact with water; ice melts near fire or heat.
+      spark travels through water and metal, and ignites wood/oil.
+      tnt explodes when touched by fire or spark.
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   ELEMENT DEFINITIONS
+   ========================================================================= */
+const T = {
+  EMPTY:0, WALL:1, STONE:2, SAND:3, WOOD:4, GLASS:5, METAL:6, ICE:7,
+  WATER:8, OIL:9, ACID:10, LAVA:11,
+  FIRE:12, SMOKE:13, STEAM:14, SPARK:15,
+  PLANT:16, SEED:17,
+  BLACKHOLE:18, WHITEHOLE:19, TNT:20
+};
+
+const CAT = { STATIC:'static', POWDER:'powder', LIQUID:'liquid', GAS:'gas', ENERGY:'energy', ORGANIC:'organic', SPECIAL:'special', ICEC:'ice' };
+
+const ELEMENTS = {
+  [T.EMPTY]:    { name:'Empty',      cat:CAT.STATIC, color:[8,8,8] },
+  [T.WALL]:     { name:'Wall',       cat:CAT.STATIC, color:[70,72,82],   hardness:Infinity },
+  [T.STONE]:    { name:'Stone',      cat:CAT.STATIC, color:[105,102,96], hardness:4 },
+  [T.SAND]:     { name:'Sand',       cat:CAT.POWDER, color:[224,192,120],density:8, hardness:1 },
+  [T.WOOD]:     { name:'Wood',       cat:CAT.STATIC, color:[122,80,44],  hardness:2, flammable:true, burnTime:[90,160] },
+  [T.GLASS]:    { name:'Glass',      cat:CAT.STATIC, color:[150,200,205],hardness:3, heatproof:true },
+  [T.METAL]:    { name:'Metal',      cat:CAT.STATIC, color:[170,175,182],hardness:5, heatproof:true, conductive:true },
+  [T.ICE]:      { name:'Ice',        cat:CAT.ICEC,   color:[190,225,240],hardness:1 },
+  [T.WATER]:    { name:'Water',      cat:CAT.LIQUID, color:[52,110,210], density:5 },
+  [T.OIL]:      { name:'Oil',        cat:CAT.LIQUID, color:[92,70,40],   density:3, flammable:true, burnTime:[40,70] },
+  [T.ACID]:     { name:'Acid',       cat:CAT.LIQUID, color:[150,220,70], density:6 },
+  [T.LAVA]:     { name:'Lava',       cat:CAT.LIQUID, color:[230,90,20],  density:9 },
+  [T.FIRE]:     { name:'Fire',       cat:CAT.ENERGY, color:[240,110,30] },
+  [T.SMOKE]:    { name:'Smoke',      cat:CAT.GAS,    color:[80,80,86],   density:1 },
+  [T.STEAM]:    { name:'Steam',      cat:CAT.GAS,    color:[200,205,210],density:1 },
+  [T.SPARK]:    { name:'Spark',      cat:CAT.ENERGY, color:[255,235,90] },
+  [T.PLANT]:    { name:'Plant',      cat:CAT.ORGANIC,color:[60,150,60],  hardness:1, flammable:true, burnTime:[30,60] },
+  [T.SEED]:     { name:'Seed',       cat:CAT.ORGANIC,color:[150,110,50], hardness:1, flammable:true, burnTime:[20,30] },
+  [T.BLACKHOLE]:{ name:'Black Hole', cat:CAT.SPECIAL,color:[130,40,200] },
+  [T.WHITEHOLE]:{ name:'White Hole', cat:CAT.SPECIAL,color:[255,255,255]},
+  [T.TNT]:      { name:'TNT',        cat:CAT.SPECIAL,color:[210,40,40],  hardness:1 },
+};
+
+const FLAMMABLE = new Set([T.WOOD, T.OIL, T.PLANT, T.SEED]);
+const INDESTRUCTIBLE = new Set([T.WALL, T.BLACKHOLE, T.WHITEHOLE]);
+
+const TOOLBAR_GROUPS = [
+  { id:'grp-solid',   items:[T.WALL, T.STONE, T.SAND, T.WOOD, T.GLASS, T.METAL, T.ICE] },
+  { id:'grp-liquid',  items:[T.WATER, T.OIL, T.ACID, T.LAVA] },
+  { id:'grp-energy',  items:[T.FIRE, T.SMOKE, T.STEAM, T.SPARK] },
+  { id:'grp-special', items:[T.PLANT, T.SEED, T.BLACKHOLE, T.WHITEHOLE, T.TNT] },
+];
+
+/* =========================================================================
+   SIMULATION ENGINE
+   ========================================================================= */
+class Sim {
+  constructor(w, h){
+    this.w = w; this.h = h;
+    const n = w*h;
+    this.grid    = new Uint8Array(n);
+    this.meta    = new Uint8Array(n);
+    this.variant = new Uint8Array(n);
+    this.moved   = new Uint8Array(n);
+    this.tick = 0;
+
+    this.gravAngle = 0;
+    this.gravStrength = 1.0;
+    this.zeroG = false;
+    this.wind = 0;
+    this.heat = 0;
+    this.rain = false;
+    this.emitterTarget = T.WATER;
+
+    this.params = {
+      fireSpread: 0.05,
+      acidCorrode: 0.02,
+      sparkRate: 0.40,
+      plantRate: 0.01,
+      blastRadius: 6,
+    };
+
+    this.paused = false;
+    this.activeCount = 0;
+  }
+
+  idx(x,y){ return y*this.w + x; }
+  inBounds(x,y){ return x>=0 && x<this.w && y>=0 && y<this.h; }
+  get(x,y){ return this.inBounds(x,y) ? this.grid[this.idx(x,y)] : T.WALL; }
+
+  set(x,y,type,meta=0){
+    if(!this.inBounds(x,y)) return;
+    const i = this.idx(x,y);
+    this.grid[i] = type;
+    this.meta[i] = meta;
+    this.variant[i] = (Math.random()*4)|0;
+  }
+
+  clearAll(){ this.grid.fill(0); this.meta.fill(0); this.variant.fill(0); }
+
+  gravVec(){
+    if(this.zeroG) return {dx:0, dy:0};
+    const rad = this.gravAngle * Math.PI/180;
+    const vx = Math.sin(rad), vy = Math.cos(rad);
+    return { dx: Math.abs(vx)<0.35 ? 0 : (vx>0?1:-1), dy: Math.abs(vy)<0.35 ? 0 : (vy>0?1:-1) };
+  }
+
+  candidates(dx,dy){
+    const out = [[dx,dy]];
+    if(dx!==0 && dy!==0){ out.push([dx,0],[0,dy]); }
+    else if(dy!==0){ out.push([-1,dy],[1,dy]); }
+    else if(dx!==0){ out.push([dx,-1],[dx,1]); }
+    else { out.push([1,0],[-1,0],[0,1],[0,-1]); }
+    return out;
+  }
+
+  brushPaint(cx, cy, radius, type){
+    const r2 = radius*radius;
+    for(let y=-radius; y<=radius; y++){
+      for(let x=-radius; x<=radius; x++){
+        if(x*x+y*y > r2) continue;
+        const gx = cx+x, gy = cy+y;
+        if(!this.inBounds(gx,gy)) continue;
+        if(type===T.EMPTY){ this.set(gx,gy,T.EMPTY,0); continue; }
+        if(this.get(gx,gy)===T.EMPTY){
+          let m = 0;
+          if(type===T.FIRE) m = 60+((Math.random()*40)|0);
+          if(type===T.SPARK) m = 8;
+          if(type===T.ACID) m = 200;
+          this.set(gx,gy,type,m);
+        }
+      }
+    }
+  }
+
+  attemptGravity(){
+    // gravity strength gates whether a move is even attempted this tick
+    return Math.random() < Math.min(1, this.gravStrength);
+  }
+
+  step(){
+    if(this.paused) return;
+    this.tick++;
+    this.moved.fill(0);
+
+    const g = this.gravVec();
+    this.solidDir = this.candidates(g.dx, g.dy);
+    this.gasDir = this.candidates(-g.dx, -g.dy);
+    this.extraFall = this.gravStrength > 1 && Math.random() < (this.gravStrength - 1);
+
+    const rowStart = g.dy >= 0 ? this.h-1 : 0;
+    const rowEnd   = g.dy >= 0 ? -1 : this.h;
+    const rowStep  = g.dy >= 0 ? -1 : 1;
+
+    for(let y=rowStart; y!==rowEnd; y+=rowStep){
+      const leftToRight = (y % 2 === 0) !== (g.dx < 0);
+      const xStart = leftToRight ? 0 : this.w-1;
+      const xEnd   = leftToRight ? this.w : -1;
+      const xStep  = leftToRight ? 1 : -1;
+      for(let x=xStart; x!==xEnd; x+=xStep){
+        this.updateCell(x,y);
+      }
+    }
+
+    if(this.rain && this.tick % 2 === 0){
+      const rx = (Math.random()*this.w)|0;
+      if(this.get(rx,0)===T.EMPTY) this.set(rx,0,T.WATER);
+    }
+
+    let active = 0;
+    for(let i=0;i<this.grid.length;i++) if(this.grid[i]!==T.EMPTY) active++;
+    this.activeCount = active;
+  }
+
+  swap(x1,y1,x2,y2){
+    const i1=this.idx(x1,y1), i2=this.idx(x2,y2);
+    const t=this.grid[i1], m=this.meta[i1], v=this.variant[i1];
+    this.grid[i1]=this.grid[i2]; this.meta[i1]=this.meta[i2]; this.variant[i1]=this.variant[i2];
+    this.grid[i2]=t; this.meta[i2]=m; this.variant[i2]=v;
+    this.moved[i2]=1;
+  }
+
+  moveIfPossible(x,y,dirs,canGoInto,gated){
+    if(gated && !this.attemptGravity()) return false;
+    for(const [dx,dy] of dirs){
+      if(dx===0 && dy===0) continue;
+      const nx=x+dx, ny=y+dy;
+      if(!this.inBounds(nx,ny)) continue;
+      const ni = this.idx(nx,ny);
+      if(this.moved[ni]) continue;
+      if(canGoInto(this.grid[ni], nx, ny)){
+        this.swap(x,y,nx,ny);
+        if(this.extraFall){
+          const i2 = this.idx(nx,ny);
+          // try one more consecutive step for extra gravity strength
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  destructibleSolid(nt){
+    if(nt===T.EMPTY || nt===T.ACID) return false;
+    if(INDESTRUCTIBLE.has(nt)) return false;
+    const def = ELEMENTS[nt];
+    return def.cat===CAT.STATIC || def.cat===CAT.POWDER || def.cat===CAT.ORGANIC || def.cat===CAT.SPECIAL || def.cat===CAT.ICEC;
+  }
+
+  updateCell(x,y){
+    const i = this.idx(x,y);
+    if(this.moved[i]) return;
+    const type = this.grid[i];
+    if(type===T.EMPTY) return;
+    const def = ELEMENTS[type];
+    switch(def.cat){
+      case CAT.POWDER: this.updatePowder(x,y,i); break;
+      case CAT.LIQUID: this.updateLiquid(x,y,i,type); break;
+      case CAT.GAS:    this.updateGas(x,y,i,type); break;
+      case CAT.ENERGY: this.updateEnergy(x,y,i,type); break;
+      case CAT.ORGANIC:this.updateOrganic(x,y,i,type); break;
+      case CAT.SPECIAL:this.updateSpecial(x,y,i,type); break;
+      case CAT.ICEC:   this.updateIce(x,y,i); break;
+      default: break;
+    }
+  }
+
+  updatePowder(x,y,i){
+    this.moveIfPossible(x,y,this.solidDir,(t)=> t===T.EMPTY || (ELEMENTS[t] && ELEMENTS[t].cat===CAT.LIQUID && ELEMENTS[t].density < ELEMENTS[T.SAND].density), true);
+  }
+
+  updateLiquid(x,y,i,type){
+    const myDensity = ELEMENTS[type].density;
+
+    if(type===T.ACID){
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+      let touchedWater = false;
+      for(const [dx,dy] of neigh){
+        const nx=x+dx, ny=y+dy;
+        if(!this.inBounds(nx,ny)) continue;
+        const nt = this.get(nx,ny);
+        if(nt===T.WATER) touchedWater = true;
+        else if(this.destructibleSolid(nt)){
+          const hardness = ELEMENTS[nt].hardness || 1;
+          if(Math.random() < this.params.acidCorrode/hardness){
+            this.set(nx,ny,T.EMPTY,0);
+            this.meta[i] = Math.max(0, this.meta[i]-25);
+          }
+        }
+      }
+      // acid neutralizes when mixed with water
+      if(touchedWater && Math.random()<0.05){
+        this.set(x,y,T.WATER,0);
+        return;
+      }
+      if(this.meta[i] <= 0 && Math.random()<0.05){
+        this.set(x,y,T.EMPTY,0);
+        return;
+      }
+    }
+
+    if(type===T.WATER){
+      if(this.heat>0 && Math.random() < this.heat*0.0006){
+        this.set(x,y,T.STEAM, 40+((Math.random()*30)|0));
+        return;
+      }
+      if(this.heat<0 && Math.random() < (-this.heat)*0.0005){
+        this.set(x,y,T.ICE,0);
+        return;
+      }
+    }
+
+    if(type===T.OIL && this.heat>=8 && Math.random() < 0.0015){
+      this.set(x,y,T.FIRE, 40+((Math.random()*30)|0));
+      return;
+    }
+
+    if(type===T.LAVA){
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+      for(const [dx,dy] of neigh){
+        const nx=x+dx, ny=y+dy;
+        if(!this.inBounds(nx,ny)) continue;
+        const nt = this.get(nx,ny);
+        if(nt===T.WATER){
+          this.set(x,y,T.STONE,0);
+          this.set(nx,ny,T.STEAM,30);
+          return;
+        }
+        if(nt===T.SAND){ this.set(nx,ny,T.GLASS,0); }
+        else if(nt===T.ICE){ this.set(nx,ny,T.WATER,0); }
+        else if(FLAMMABLE.has(nt) && Math.random()<0.3){
+          const bt = ELEMENTS[nt].burnTime || [30,50];
+          this.set(nx,ny,T.FIRE, bt[0]+((Math.random()*(bt[1]-bt[0]))|0));
+        }
+      }
+    }
+
+    const canGoInto = (t)=> t===T.EMPTY || (ELEMENTS[t] && ELEMENTS[t].cat===CAT.LIQUID && ELEMENTS[t].density < myDensity);
+    let moved = this.moveIfPossible(x,y,this.solidDir,canGoInto,true);
+    if(!moved){
+      let order = Math.random()<0.5 ? [1,-1] : [-1,1];
+      if(this.wind>0) order = [1,-1];
+      if(this.wind<0) order = [-1,1];
+      for(const dx of order){
+        const nx=x+dx;
+        if(!this.inBounds(nx,y)) continue;
+        const ni = this.idx(nx,y);
+        if(this.moved[ni]) continue;
+        const nt = this.grid[ni];
+        if(nt===T.EMPTY || (ELEMENTS[nt] && ELEMENTS[nt].cat===CAT.LIQUID && ELEMENTS[nt].density < myDensity)){
+          this.swap(x,y,nx,y);
+          moved = true;
+          break;
+        }
+      }
+    }
+  }
+
+  updateGas(x,y,i,type){
+    this.meta[i] = Math.max(0, this.meta[i]-1);
+    if(this.meta[i]<=0 && Math.random()<0.03){
+      if(type===T.STEAM && this.heat<0 && Math.random()<0.4){ this.set(x,y,T.WATER,0); return; }
+      this.set(x,y,T.EMPTY,0);
+      return;
+    }
+    let dirs = this.gasDir.slice();
+    if(Math.random() < Math.abs(this.wind)/14){ dirs.unshift([this.wind>0?1:-1, 0]); }
+    this.moveIfPossible(x,y,dirs,(t)=> t===T.EMPTY);
+  }
+
+  updateEnergy(x,y,i,type){
+    if(type===T.FIRE){
+      this.meta[i]--;
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+      let extinguished = false;
+      for(const [dx,dy] of neigh){
+        const nx=x+dx, ny=y+dy;
+        if(!this.inBounds(nx,ny)) continue;
+        const nt = this.get(nx,ny);
+        if(nt===T.WATER){ extinguished = true; }
+        else if(nt===T.SAND && Math.random()<this.params.fireSpread){
+          this.set(nx,ny,T.GLASS,0);
+        } else if(nt===T.STONE && Math.random()<this.params.fireSpread*0.4){
+          this.set(nx,ny,T.LAVA,0);
+        } else if(nt===T.TNT){
+          this.explode(nx,ny);
+        } else if(FLAMMABLE.has(nt) && Math.random()<this.params.fireSpread){
+          const bt = ELEMENTS[nt].burnTime || [30,50];
+          this.set(nx,ny,T.FIRE, bt[0]+((Math.random()*(bt[1]-bt[0]))|0));
+        }
+      }
+      if(extinguished && Math.random()<0.6){ this.set(x,y,T.STEAM, 30); return; }
+      if(this.meta[i]<=0){ this.set(x,y, Math.random()<0.5 ? T.SMOKE : T.EMPTY, 40); return; }
+      if(Math.random()<0.3) this.moveIfPossible(x,y,this.gasDir,(t)=>t===T.EMPTY);
+    } else if(type===T.SPARK){
+      this.meta[i]--;
+      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+      for(const [dx,dy] of neigh){
+        const nx=x+dx, ny=y+dy;
+        if(!this.inBounds(nx,ny)) continue;
+        const ni = this.idx(nx,ny);
+        const nt = this.grid[ni];
+        if(nt===T.WATER && !this.moved[ni] && Math.random()<this.params.sparkRate){
+          this.grid[ni]=T.SPARK; this.meta[ni]=6; this.moved[ni]=1;
+        } else if(nt===T.METAL){
+          for(const [dx2,dy2] of neigh){
+            const mx=nx+dx2, my=ny+dy2;
+            if(mx===x && my===y) continue;
+            if(!this.inBounds(mx,my)) continue;
+            const mi = this.idx(mx,my);
+            if(this.moved[mi]) continue;
+            const mt = this.grid[mi];
+            if(mt===T.EMPTY && Math.random()<this.params.sparkRate){
+              this.grid[mi]=T.SPARK; this.meta[mi]=6; this.moved[mi]=1;
+            } else if(FLAMMABLE.has(mt) && Math.random()<0.08){
+              const bt = ELEMENTS[mt].burnTime || [30,50];
+              this.set(mx,my,T.FIRE, bt[0]+((Math.random()*(bt[1]-bt[0]))|0));
+            }
+          }
+        } else if(nt===T.TNT){
+          this.explode(nx,ny);
+        } else if(FLAMMABLE.has(nt) && Math.random()<0.08){
+          const bt = ELEMENTS[nt].burnTime || [30,50];
+          this.set(nx,ny,T.FIRE, bt[0]+((Math.random()*(bt[1]-bt[0]))|0));
+        }
+      }
+      if(this.meta[i]<=0){ this.set(x,y,T.EMPTY,0); }
+    }
+  }
+
+  updateIce(x,y,i){
+    const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
+    for(const [dx,dy] of neigh){
+      const nx=x+dx, ny=y+dy;
+      if(!this.inBounds(nx,ny)) continue;
+      const nt = this.get(nx,ny);
+      if(nt===T.FIRE || nt===T.LAVA){ this.set(x,y,T.WATER,0); return; }
+      if(nt===T.WATER && this.heat<0 && Math.random()<0.02){ this.set(nx,ny,T.ICE,0); }
+    }
+    if(this.heat>2 && Math.random()<this.heat*0.001){ this.set(x,y,T.WATER,0); }
+  }
+
+  updateOrganic(x,y,i,type){
+    if(type===T.SEED){
+      const neigh = [[1,0],[-1,0],[0,1],[1,1],[-1,1]];
+      let nearWater = false;
+      for(const [dx,dy] of neigh){ if(this.get(x+dx,y+dy)===T.WATER) nearWater = true; }
+      if(nearWater && this.get(x,y-1)===T.EMPTY && Math.random()<this.params.plantRate*2){
+        this.set(x,y-1,T.PLANT,0);
+      }
+    } else if(type===T.PLANT){
+      this.meta[i]++;
+      if(this.meta[i] < 200){
+        const dirs = [[0,-1],[0,-1],[1,-1],[-1,-1],[1,0],[-1,0]];
+        let nearWater = false;
+        for(const [dx,dy] of [[1,0],[-1,0],[0,1],[1,1],[-1,1],[0,-1]]){
+          if(this.get(x+dx,y+dy)===T.WATER) nearWater = true;
+        }
+        if(nearWater && Math.random()<this.params.plantRate){
+          const [dx,dy] = dirs[(Math.random()*dirs.length)|0];
+          if(this.get(x+dx,y+dy)===T.EMPTY){ this.set(x+dx,y+dy,T.PLANT, this.meta[i]); }
+        }
+      }
+    }
+  }
+
+  explode(x,y){
+    // iterative (non-recursive) chain detonation so adjacent TNT can never
+    // cause unbounded call-stack growth, however large the chain is
+    const seen = new Set([x+','+y]);
+    const queue = [[x,y]];
+    let guard = 0;
+    while(queue.length && guard < this.w*this.h){
+      guard++;
+      const [cx,cy] = queue.shift();
+      const R = this.params.blastRadius;
+      for(let dy=-R; dy<=R; dy++){
+        for(let dx=-R; dx<=R; dx++){
+          const dist = Math.sqrt(dx*dx+dy*dy);
+          if(dist>R) continue;
+          const nx=cx+dx, ny=cy+dy;
+          if(!this.inBounds(nx,ny)) continue;
+          const nt = this.get(nx,ny);
+          if(INDESTRUCTIBLE.has(nt)) continue;
+          const chance = 1 - dist/R;
+          if(Math.random() > chance) continue;
+          if(nt===T.TNT){
+            const key = nx+','+ny;
+            if(!seen.has(key)){ seen.add(key); queue.push([nx,ny]); }
+            continue;
+          }
+          if(Math.random() < chance*0.5){
+            this.set(nx,ny, T.FIRE, 20+((Math.random()*20)|0));
+          } else {
+            this.set(nx,ny, T.EMPTY, 0);
+          }
+        }
+      }
+    }
+  }
+
+  updateSpecial(x,y,i,type){
+    if(type===T.TNT){ return; }
+    if(type===T.BLACKHOLE){
+      const R = 14;
+      for(let dy=-R;dy<=R;dy++){
+        for(let dx=-R;dx<=R;dx++){
+          const dist = Math.sqrt(dx*dx+dy*dy);
+          if(dist===0 || dist>R) continue;
+          const nx=x+dx, ny=y+dy;
+          if(!this.inBounds(nx,ny)) continue;
+          const ni = this.idx(nx,ny);
+          if(this.moved[ni]) continue;
+          const nt = this.grid[ni];
+          if(nt===T.EMPTY || nt===T.BLACKHOLE) continue;
+          const pull = (R-dist)/R;
+          if(Math.random() > pull*0.9) continue;
+          const stepx = dx===0?0:(dx>0?-1:1);
+          const stepy = dy===0?0:(dy>0?-1:1);
+          const tx = nx+stepx, ty = ny+stepy;
+          if(!this.inBounds(tx,ty)) continue;
+          if(tx===x && ty===y){
+            this.grid[ni]=T.EMPTY; this.meta[ni]=0; this.moved[ni]=1;
+          } else if(this.grid[this.idx(tx,ty)]===T.EMPTY && !this.moved[this.idx(tx,ty)]){
+            this.swap(nx,ny,tx,ty);
+          }
+        }
+      }
+    } else if(type===T.WHITEHOLE){
+      this.meta[i]++;
+      if(this.meta[i] % 6 === 0){
+        const neigh = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
+        const [dx,dy] = neigh[(Math.random()*neigh.length)|0];
+        const nx=x+dx, ny=y+dy;
+        if(this.inBounds(nx,ny) && this.get(nx,ny)===T.EMPTY){ this.set(nx,ny, this.emitterTarget); }
+      }
+      const R = 6;
+      for(let dy=-R;dy<=R;dy++){
+        for(let dx=-R;dx<=R;dx++){
+          const dist = Math.sqrt(dx*dx+dy*dy);
+          if(dist===0 || dist>R) continue;
+          if(Math.random()>0.05) continue;
+          const nx=x+dx, ny=y+dy;
+          if(!this.inBounds(nx,ny)) continue;
+          const ni=this.idx(nx,ny);
+          if(this.moved[ni] || this.grid[ni]===T.EMPTY) continue;
+          const stepx = dx===0?0:(dx>0?1:-1);
+          const stepy = dy===0?0:(dy>0?1:-1);
+          const tx=nx+stepx, ty=ny+stepy;
+          if(this.inBounds(tx,ty) && this.grid[this.idx(tx,ty)]===T.EMPTY && !this.moved[this.idx(tx,ty)]){
+            this.swap(nx,ny,tx,ty);
+          }
+        }
+      }
+    }
+  }
+}
+
+/* =========================================================================
+   RENDERER
+   ========================================================================= */
+class Renderer {
+  constructor(sim, canvas){
+    this.sim = sim;
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.off = document.createElement('canvas');
+    this.off.width = sim.w; this.off.height = sim.h;
+    this.offCtx = this.off.getContext('2d');
+    this.imgData = this.offCtx.createImageData(sim.w, sim.h);
+    this.ctx.imageSmoothingEnabled = false;
+  }
+
+  draw(){
+    const { sim } = this;
+    const data = this.imgData.data;
+    const g = sim.grid, v = sim.variant, meta = sim.meta;
+    for(let i=0;i<g.length;i++){
+      const type = g[i];
+      const def = ELEMENTS[type];
+      let [r,gg,b] = def.color;
+      if(type!==T.EMPTY){
+        const jitter = (v[i]-1.5)*6;
+        r = Math.min(255,Math.max(0,r+jitter));
+        gg = Math.min(255,Math.max(0,gg+jitter));
+        b = Math.min(255,Math.max(0,b+jitter));
+        if(type===T.FIRE){
+          const life = meta[i];
+          r = 255; gg = Math.min(200, 60+life); b = 20;
+        }
+        if(type===T.LAVA){
+          const pulse = (v[i]%2)*20;
+          r = 230; gg = 70+pulse; b = 10;
+        }
+      }
+      const o = i*4;
+      data[o]=r; data[o+1]=gg; data[o+2]=b; data[o+3]=255;
+    }
+    this.offCtx.putImageData(this.imgData,0,0);
+    this.ctx.clearRect(0,0,this.canvas.width,this.canvas.height);
+    this.ctx.drawImage(this.off,0,0,sim.w,sim.h,0,0,this.canvas.width,this.canvas.height);
+  }
+}
+
+/* =========================================================================
+   APP / UI WIRING
+   ========================================================================= */
+const GRID_W = 200, GRID_H = 150, SCALE = 4;
+const canvas = document.getElementById('view');
+canvas.width = GRID_W*SCALE;
+canvas.height = GRID_H*SCALE;
+
+const sim = new Sim(GRID_W, GRID_H);
+const renderer = new Renderer(sim, canvas);
+
+for(let x=0;x<GRID_W;x++){ sim.set(x, GRID_H-1, T.WALL); }
+
+let selectedElement = T.SAND;
+let brushSize = 3;
+let eraseMode = false;
+
+function buildToolbar(){
+  for(const grp of TOOLBAR_GROUPS){
+    const container = document.getElementById(grp.id);
+    for(const type of grp.items){
+      const def = ELEMENTS[type];
+      const btn = document.createElement('div');
+      btn.className = 'elem-btn';
+      btn.dataset.type = type;
+      const [r,g,b] = def.color;
+      btn.innerHTML = '<div class="swatch" style="background:rgb('+r+','+g+','+b+')"></div><div>'+def.name+'</div>';
+      btn.addEventListener('click', ()=>{
+        selectedElement = type;
+        eraseMode = false;
+        document.getElementById('btnErase').classList.remove('on');
+        document.querySelectorAll('.elem-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('selOut').textContent = def.name.toUpperCase();
+      });
+      container.appendChild(btn);
+      if(type===selectedElement) btn.classList.add('active');
+    }
+  }
+}
+buildToolbar();
+
+const emitterSelect = document.getElementById('emitterSelect');
+[T.WATER, T.SAND, T.OIL, T.FIRE, T.ACID, T.SMOKE, T.SPARK, T.PLANT, T.LAVA].forEach(t=>{
+  const opt = document.createElement('option');
+  opt.value = t; opt.textContent = ELEMENTS[t].name;
+  emitterSelect.appendChild(opt);
+});
+emitterSelect.value = T.WATER;
+emitterSelect.addEventListener('change', ()=>{ sim.emitterTarget = parseInt(emitterSelect.value,10); });
+
+const brushSlider = document.getElementById('brushSize');
+const brushValOut = document.getElementById('brushValOut');
+brushSlider.addEventListener('input', ()=>{ brushSize = parseInt(brushSlider.value,10); brushValOut.textContent = brushSize; });
+
+document.getElementById('btnErase').addEventListener('click', (e)=>{
+  eraseMode = !eraseMode;
+  e.target.classList.toggle('on', eraseMode);
+});
+document.getElementById('btnClear').addEventListener('click', ()=>{
+  sim.clearAll();
+  for(let x=0;x<GRID_W;x++) sim.set(x, GRID_H-1, T.WALL);
+});
+const btnPause = document.getElementById('btnPause');
+btnPause.addEventListener('click', ()=>{
+  sim.paused = !sim.paused;
+  btnPause.textContent = sim.paused ? 'resume' : 'pause';
+  btnPause.classList.toggle('on', sim.paused);
+});
+document.getElementById('btnStep').addEventListener('click', ()=>{
+  const wasPaused = sim.paused;
+  sim.paused = false;
+  sim.step();
+  sim.paused = true;
+  if(!wasPaused){ btnPause.textContent='resume'; btnPause.classList.add('on'); }
+});
+
+const gAngleSlider = document.getElementById('gAngle');
+const gAngleOut = document.getElementById('gAngleOut');
+const gravOut = document.getElementById('gravOut');
+function setGravity(angle){
+  sim.zeroG = false;
+  sim.gravAngle = ((angle%360)+360)%360;
+  gAngleSlider.value = sim.gravAngle;
+  gAngleOut.textContent = sim.gravAngle;
+  updateGravLabel();
+}
+gAngleSlider.addEventListener('input', ()=> setGravity(parseInt(gAngleSlider.value,10)));
+document.querySelectorAll('[data-g]').forEach(b=>{
+  b.addEventListener('click', ()=> setGravity(parseInt(b.dataset.g,10)));
+});
+const btnZeroG = document.getElementById('btnZeroG');
+btnZeroG.addEventListener('click', ()=>{
+  sim.zeroG = !sim.zeroG;
+  btnZeroG.classList.toggle('on', sim.zeroG);
+  updateGravLabel();
+});
+const gStrengthSlider = document.getElementById('gStrength');
+const gStrengthOut = document.getElementById('gStrengthOut');
+gStrengthSlider.addEventListener('input', ()=>{
+  sim.gravStrength = parseFloat(gStrengthSlider.value);
+  gStrengthOut.textContent = sim.gravStrength.toFixed(1);
+  updateGravLabel();
+});
+function updateGravLabel(){
+  if(sim.zeroG){ gravOut.textContent = 'zero-g'; return; }
+  const names = ['down','down-right','right','up-right','up','up-left','left','down-left'];
+  const idx = Math.round(sim.gravAngle/45)%8;
+  gravOut.textContent = names[idx] + ' ' + sim.gravStrength.toFixed(1);
+}
+updateGravLabel();
+
+const windSlider = document.getElementById('windSlider');
+const windOut = document.getElementById('windOut');
+windSlider.addEventListener('input', ()=>{ sim.wind = parseInt(windSlider.value,10); windOut.textContent = sim.wind; });
+const heatSlider = document.getElementById('heatSlider');
+const heatOut = document.getElementById('heatOut');
+heatSlider.addEventListener('input', ()=>{ sim.heat = parseInt(heatSlider.value,10); heatOut.textContent = sim.heat; });
+const btnRain = document.getElementById('btnRain');
+btnRain.addEventListener('click', ()=>{
+  sim.rain = !sim.rain;
+  btnRain.textContent = 'rain: ' + (sim.rain?'on':'off');
+  btnRain.classList.toggle('on', sim.rain);
+});
+
+const speedSteps = [0.25, 0.5, 1, 2, 3, 4, 8];
+let simSpeed = 1;
+let speedAccum = 0;
+const simSpeedSlider = document.getElementById('simSpeed');
+const simSpeedOut = document.getElementById('simSpeedOut');
+simSpeedSlider.addEventListener('input', ()=>{
+  simSpeed = speedSteps[parseInt(simSpeedSlider.value,10)];
+  simSpeedOut.textContent = simSpeed + 'x';
+});
+simSpeed = speedSteps[parseInt(simSpeedSlider.value,10)];
+simSpeedOut.textContent = simSpeed + 'x';
+
+function bindParam(id, key, div, outId){
+  const el = document.getElementById(id);
+  const out = document.getElementById(outId);
+  el.addEventListener('input', ()=>{
+    sim.params[key] = parseFloat(el.value)/div;
+    out.textContent = el.value;
+  });
+}
+bindParam('fireSpread','fireSpread',100,'fireSpreadOut');
+bindParam('acidCorrode','acidCorrode',100,'acidCorrodeOut');
+bindParam('sparkRate','sparkRate',100,'sparkRateOut');
+bindParam('plantRate','plantRate',100,'plantRateOut');
+document.getElementById('blastRadius').addEventListener('input', (e)=>{
+  sim.params.blastRadius = parseInt(e.target.value,10);
+  document.getElementById('blastRadiusOut').textContent = e.target.value;
+});
+
+let painting = false;
+let paintErase = false;
+
+function canvasToGrid(clientX, clientY){
+  const rect = canvas.getBoundingClientRect();
+  const px = (clientX-rect.left) / rect.width * GRID_W;
+  const py = (clientY-rect.top) / rect.height * GRID_H;
+  return { x: px|0, y: py|0 };
+}
+
+function paintAt(clientX, clientY){
+  const {x,y} = canvasToGrid(clientX, clientY);
+  const type = (eraseMode || paintErase) ? T.EMPTY : selectedElement;
+  sim.brushPaint(x,y,brushSize,type);
+}
+
+canvas.addEventListener('contextmenu', e=> e.preventDefault());
+canvas.addEventListener('mousedown', e=>{
+  painting = true;
+  paintErase = e.button===2;
+  paintAt(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', ()=> painting=false);
+canvas.addEventListener('mousemove', e=>{ if(painting) paintAt(e.clientX, e.clientY); });
+
+canvas.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  painting = true;
+  const t = e.touches[0];
+  paintAt(t.clientX, t.clientY);
+},{passive:false});
+canvas.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  const t = e.touches[0];
+  if(painting) paintAt(t.clientX, t.clientY);
+},{passive:false});
+canvas.addEventListener('touchend', ()=> painting=false);
+
+window.addEventListener('keydown', e=>{
+  if(e.key==='e' || e.key==='E'){ paintErase = true; }
+  if(e.code==='Space'){ e.preventDefault(); btnPause.click(); }
+});
+window.addEventListener('keyup', e=>{
+  if(e.key==='e' || e.key==='E'){ paintErase = false; }
+});
+
+document.getElementById('gridOut').textContent = GRID_W+'x'+GRID_H;
+const fpsOut = document.getElementById('fpsOut');
+const activeOut = document.getElementById('activeOut');
+const tickOut = document.getElementById('tickOut');
+let lastTime = performance.now();
+let frameCount = 0, fpsAccum = 0;
+
+function loop(now){
+  const dt = now - lastTime;
+  lastTime = now;
+  frameCount++;
+  fpsAccum += dt;
+  if(fpsAccum >= 500){
+    fpsOut.textContent = Math.round(frameCount / (fpsAccum/1000));
+    frameCount = 0; fpsAccum = 0;
+  }
+
+  if(simSpeed >= 1){
+    for(let s=0; s<Math.round(simSpeed); s++) sim.step();
+  } else {
+    speedAccum += simSpeed;
+    if(speedAccum >= 1){ sim.step(); speedAccum -= 1; }
+  }
+
+  renderer.draw();
+  activeOut.textContent = sim.activeCount;
+  tickOut.textContent = sim.tick;
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
