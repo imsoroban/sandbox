@@ -35,6 +35,7 @@
     background: #ece9e4;
     border: 1px solid #888;
     padding: 4px 8px;
+    flex-wrap: wrap;
   }
   #top span { color: #333; }
   #top b { color: #000; }
@@ -62,6 +63,10 @@
     cursor: crosshair;
     border: 1px solid #444;
     background: #000;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
   }
   fieldset {
     border: 1px solid #999;
@@ -147,6 +152,25 @@
   }
   ::-webkit-scrollbar { width: 10px; }
   ::-webkit-scrollbar-thumb { background: #aaa; }
+
+  /* responsive layout for small / Chromebook-class screens */
+  @media (max-width: 900px) {
+    #app {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto 1fr auto;
+      grid-template-areas:
+        "top"
+        "left"
+        "stage"
+        "right";
+      overflow-y: auto;
+      height: auto;
+      min-height: 100%;
+    }
+    .panel { max-height: 200px; }
+    #stage { min-height: 260px; }
+    html, body { height: auto; min-height: 100%; }
+  }
 </style>
 </head>
 <body>
@@ -154,7 +178,8 @@
   <div id="top">
     <span>fps <b id="fpsOut">60</b></span>
     <span>cells <b id="activeOut">0</b></span>
-    <span>grid <b id="gridOut">200x150</b></span>
+    <span>pop <b id="popOut">0</b></span>
+    <span>grid <b id="gridOut">160x120</b></span>
     <span>tick <b id="tickOut">0</b></span>
   </div>
 
@@ -174,6 +199,10 @@
     <fieldset>
       <legend>Organic / Special</legend>
       <div class="elem-grid" id="grp-special"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Life</legend>
+      <div class="elem-grid" id="grp-life"></div>
     </fieldset>
 
     <fieldset>
@@ -239,6 +268,23 @@
     </fieldset>
 
     <fieldset>
+      <legend>Performance</legend>
+      <div class="row"><label for="gridSizeSelect">grid size</label></div>
+      <select id="gridSizeSelect">
+        <option value="small">small (fastest)</option>
+        <option value="medium">medium</option>
+        <option value="large">large (detailed)</option>
+      </select>
+      <div class="row"><label for="fpsCapSelect">fps cap</label></div>
+      <select id="fpsCapSelect">
+        <option value="0">uncapped</option>
+        <option value="30">30 fps (battery saver)</option>
+        <option value="60">60 fps</option>
+      </select>
+      <div class="hint" id="perfNote" style="margin-top:6px;padding-top:6px;"></div>
+    </fieldset>
+
+    <fieldset>
       <legend>Stats</legend>
       <div class="stat-line">selected <b id="selOut">SAND</b></div>
       <div class="stat-line">gravity <b id="gravOut">down 1.0</b></div>
@@ -251,6 +297,12 @@
       lava turns to stone on contact with water; ice melts near fire or heat.
       spark travels through water and metal, and ignites wood/oil.
       tnt explodes when touched by fire or spark.
+      humans and animals walk, drown if submerged, and catch fire near flame or lava;
+      animals nibble nearby plants. birds fly freely but can't survive water.
+      fish need water to swim in and flop and die if stranded too long.
+      if the simulation feels slow, try a smaller grid size or a lower fps cap
+      in the Performance panel — smaller grids run much faster on lightweight
+      laptops like Chromebooks.
     </div>
   </div>
 </div>
@@ -265,10 +317,11 @@ const T = {
   WATER:8, OIL:9, ACID:10, LAVA:11,
   FIRE:12, SMOKE:13, STEAM:14, SPARK:15,
   PLANT:16, SEED:17,
-  BLACKHOLE:18, WHITEHOLE:19, TNT:20
+  BLACKHOLE:18, WHITEHOLE:19, TNT:20,
+  HUMAN:21, ANIMAL:22, BIRD:23, FISH:24
 };
 
-const CAT = { STATIC:'static', POWDER:'powder', LIQUID:'liquid', GAS:'gas', ENERGY:'energy', ORGANIC:'organic', SPECIAL:'special', ICEC:'ice' };
+const CAT = { STATIC:'static', POWDER:'powder', LIQUID:'liquid', GAS:'gas', ENERGY:'energy', ORGANIC:'organic', SPECIAL:'special', ICEC:'ice', LIFE:'life' };
 
 const ELEMENTS = {
   [T.EMPTY]:    { name:'Empty',      cat:CAT.STATIC, color:[8,8,8] },
@@ -292,9 +345,13 @@ const ELEMENTS = {
   [T.BLACKHOLE]:{ name:'Black Hole', cat:CAT.SPECIAL,color:[130,40,200] },
   [T.WHITEHOLE]:{ name:'White Hole', cat:CAT.SPECIAL,color:[255,255,255]},
   [T.TNT]:      { name:'TNT',        cat:CAT.SPECIAL,color:[210,40,40],  hardness:1 },
+  [T.HUMAN]:    { name:'Human',      cat:CAT.LIFE,   color:[235,200,170],hardness:1, flammable:true, burnTime:[50,80], walks:true, eatsPlants:false },
+  [T.ANIMAL]:   { name:'Animal',     cat:CAT.LIFE,   color:[150,110,70], hardness:1, flammable:true, burnTime:[40,70], walks:true, eatsPlants:true },
+  [T.BIRD]:     { name:'Bird',       cat:CAT.LIFE,   color:[220,225,235],hardness:1, flammable:true, burnTime:[25,40], flies:true },
+  [T.FISH]:     { name:'Fish',       cat:CAT.LIFE,   color:[250,150,60], hardness:1, flammable:true, burnTime:[20,30], aquatic:true },
 };
 
-const FLAMMABLE = new Set([T.WOOD, T.OIL, T.PLANT, T.SEED]);
+const FLAMMABLE = new Set([T.WOOD, T.OIL, T.PLANT, T.SEED, T.HUMAN, T.ANIMAL, T.BIRD, T.FISH]);
 const INDESTRUCTIBLE = new Set([T.WALL, T.BLACKHOLE, T.WHITEHOLE]);
 
 const TOOLBAR_GROUPS = [
@@ -302,7 +359,21 @@ const TOOLBAR_GROUPS = [
   { id:'grp-liquid',  items:[T.WATER, T.OIL, T.ACID, T.LAVA] },
   { id:'grp-energy',  items:[T.FIRE, T.SMOKE, T.STEAM, T.SPARK] },
   { id:'grp-special', items:[T.PLANT, T.SEED, T.BLACKHOLE, T.WHITEHOLE, T.TNT] },
+  { id:'grp-life',    items:[T.HUMAN, T.ANIMAL, T.BIRD, T.FISH] },
 ];
+
+/* Reused neighbor-offset tables. Allocating these fresh inside a per-cell
+   hot loop (as the original code did) creates tens of thousands of throwaway
+   arrays every tick, which is a major source of GC pauses/jank on weaker
+   CPUs (Chromebooks especially). Defining them once at module scope and
+   only ever reading from them removes that allocation pressure entirely. */
+const NEIGH4 = [[1,0],[-1,0],[0,1],[0,-1]];
+const NEIGH8 = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+const ORDER_LR = [1,-1];
+const ORDER_RL = [-1,1];
+const SEED_NEIGH = [[1,0],[-1,0],[0,1],[1,1],[-1,1]];
+const PLANT_GROW_DIRS = [[0,-1],[0,-1],[1,-1],[-1,-1],[1,0],[-1,0]];
+const PLANT_CHECK_NEIGH = [[1,0],[-1,0],[0,1],[1,1],[-1,1],[0,-1]];
 
 /* =========================================================================
    SIMULATION ENGINE
@@ -335,6 +406,9 @@ class Sim {
 
     this.paused = false;
     this.activeCount = 0;
+    this.population = 0;
+
+    this.gDx = 0; this.gDy = 1;
   }
 
   idx(x,y){ return y*this.w + x; }
@@ -397,6 +471,7 @@ class Sim {
     this.moved.fill(0);
 
     const g = this.gravVec();
+    this.gDx = g.dx; this.gDy = g.dy;
     this.solidDir = this.candidates(g.dx, g.dy);
     this.gasDir = this.candidates(-g.dx, -g.dy);
     this.extraFall = this.gravStrength > 1 && Math.random() < (this.gravStrength - 1);
@@ -420,9 +495,22 @@ class Sim {
       if(this.get(rx,0)===T.EMPTY) this.set(rx,0,T.WATER);
     }
 
-    let active = 0;
-    for(let i=0;i<this.grid.length;i++) if(this.grid[i]!==T.EMPTY) active++;
-    this.activeCount = active;
+    // Recomputing active/population counts is an O(n) scan; throttling it
+    // to every few ticks instead of every tick trims a bit more CPU without
+    // any visible lag in the displayed numbers.
+    if(this.tick % 3 === 0 || this.activeCount===0){
+      let active = 0, life = 0;
+      const g2 = this.grid;
+      for(let i=0;i<g2.length;i++){
+        const t = g2[i];
+        if(t!==T.EMPTY){
+          active++;
+          if(ELEMENTS[t].cat===CAT.LIFE) life++;
+        }
+      }
+      this.activeCount = active;
+      this.population = life;
+    }
   }
 
   swap(x1,y1,x2,y2){
@@ -443,10 +531,6 @@ class Sim {
       if(this.moved[ni]) continue;
       if(canGoInto(this.grid[ni], nx, ny)){
         this.swap(x,y,nx,ny);
-        if(this.extraFall){
-          const i2 = this.idx(nx,ny);
-          // try one more consecutive step for extra gravity strength
-        }
         return true;
       }
     }
@@ -457,7 +541,7 @@ class Sim {
     if(nt===T.EMPTY || nt===T.ACID) return false;
     if(INDESTRUCTIBLE.has(nt)) return false;
     const def = ELEMENTS[nt];
-    return def.cat===CAT.STATIC || def.cat===CAT.POWDER || def.cat===CAT.ORGANIC || def.cat===CAT.SPECIAL || def.cat===CAT.ICEC;
+    return def.cat===CAT.STATIC || def.cat===CAT.POWDER || def.cat===CAT.ORGANIC || def.cat===CAT.SPECIAL || def.cat===CAT.ICEC || def.cat===CAT.LIFE;
   }
 
   updateCell(x,y){
@@ -474,6 +558,7 @@ class Sim {
       case CAT.ORGANIC:this.updateOrganic(x,y,i,type); break;
       case CAT.SPECIAL:this.updateSpecial(x,y,i,type); break;
       case CAT.ICEC:   this.updateIce(x,y,i); break;
+      case CAT.LIFE:   this.updateLife(x,y,i,type); break;
       default: break;
     }
   }
@@ -486,9 +571,8 @@ class Sim {
     const myDensity = ELEMENTS[type].density;
 
     if(type===T.ACID){
-      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
       let touchedWater = false;
-      for(const [dx,dy] of neigh){
+      for(const [dx,dy] of NEIGH4){
         const nx=x+dx, ny=y+dy;
         if(!this.inBounds(nx,ny)) continue;
         const nt = this.get(nx,ny);
@@ -529,8 +613,7 @@ class Sim {
     }
 
     if(type===T.LAVA){
-      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
-      for(const [dx,dy] of neigh){
+      for(const [dx,dy] of NEIGH4){
         const nx=x+dx, ny=y+dy;
         if(!this.inBounds(nx,ny)) continue;
         const nt = this.get(nx,ny);
@@ -551,9 +634,9 @@ class Sim {
     const canGoInto = (t)=> t===T.EMPTY || (ELEMENTS[t] && ELEMENTS[t].cat===CAT.LIQUID && ELEMENTS[t].density < myDensity);
     let moved = this.moveIfPossible(x,y,this.solidDir,canGoInto,true);
     if(!moved){
-      let order = Math.random()<0.5 ? [1,-1] : [-1,1];
-      if(this.wind>0) order = [1,-1];
-      if(this.wind<0) order = [-1,1];
+      let order = Math.random()<0.5 ? ORDER_LR : ORDER_RL;
+      if(this.wind>0) order = ORDER_LR;
+      if(this.wind<0) order = ORDER_RL;
       for(const dx of order){
         const nx=x+dx;
         if(!this.inBounds(nx,y)) continue;
@@ -576,17 +659,22 @@ class Sim {
       this.set(x,y,T.EMPTY,0);
       return;
     }
-    let dirs = this.gasDir.slice();
-    if(Math.random() < Math.abs(this.wind)/14){ dirs.unshift([this.wind>0?1:-1, 0]); }
+    let dirs = this.gasDir;
+    let windDir = null;
+    if(Math.random() < Math.abs(this.wind)/14){ windDir = [this.wind>0?1:-1, 0]; }
+    if(windDir){
+      // avoid allocating a brand new array every gas tick: only build the
+      // combined list when wind actually nudges this particle
+      dirs = [windDir, ...this.gasDir];
+    }
     this.moveIfPossible(x,y,dirs,(t)=> t===T.EMPTY);
   }
 
   updateEnergy(x,y,i,type){
     if(type===T.FIRE){
       this.meta[i]--;
-      const neigh = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
       let extinguished = false;
-      for(const [dx,dy] of neigh){
+      for(const [dx,dy] of NEIGH8){
         const nx=x+dx, ny=y+dy;
         if(!this.inBounds(nx,ny)) continue;
         const nt = this.get(nx,ny);
@@ -607,8 +695,7 @@ class Sim {
       if(Math.random()<0.3) this.moveIfPossible(x,y,this.gasDir,(t)=>t===T.EMPTY);
     } else if(type===T.SPARK){
       this.meta[i]--;
-      const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
-      for(const [dx,dy] of neigh){
+      for(const [dx,dy] of NEIGH4){
         const nx=x+dx, ny=y+dy;
         if(!this.inBounds(nx,ny)) continue;
         const ni = this.idx(nx,ny);
@@ -616,7 +703,7 @@ class Sim {
         if(nt===T.WATER && !this.moved[ni] && Math.random()<this.params.sparkRate){
           this.grid[ni]=T.SPARK; this.meta[ni]=6; this.moved[ni]=1;
         } else if(nt===T.METAL){
-          for(const [dx2,dy2] of neigh){
+          for(const [dx2,dy2] of NEIGH4){
             const mx=nx+dx2, my=ny+dy2;
             if(mx===x && my===y) continue;
             if(!this.inBounds(mx,my)) continue;
@@ -642,8 +729,7 @@ class Sim {
   }
 
   updateIce(x,y,i){
-    const neigh = [[1,0],[-1,0],[0,1],[0,-1]];
-    for(const [dx,dy] of neigh){
+    for(const [dx,dy] of NEIGH4){
       const nx=x+dx, ny=y+dy;
       if(!this.inBounds(nx,ny)) continue;
       const nt = this.get(nx,ny);
@@ -655,24 +741,102 @@ class Sim {
 
   updateOrganic(x,y,i,type){
     if(type===T.SEED){
-      const neigh = [[1,0],[-1,0],[0,1],[1,1],[-1,1]];
       let nearWater = false;
-      for(const [dx,dy] of neigh){ if(this.get(x+dx,y+dy)===T.WATER) nearWater = true; }
+      for(const [dx,dy] of SEED_NEIGH){ if(this.get(x+dx,y+dy)===T.WATER) nearWater = true; }
       if(nearWater && this.get(x,y-1)===T.EMPTY && Math.random()<this.params.plantRate*2){
         this.set(x,y-1,T.PLANT,0);
       }
     } else if(type===T.PLANT){
       this.meta[i]++;
       if(this.meta[i] < 200){
-        const dirs = [[0,-1],[0,-1],[1,-1],[-1,-1],[1,0],[-1,0]];
         let nearWater = false;
-        for(const [dx,dy] of [[1,0],[-1,0],[0,1],[1,1],[-1,1],[0,-1]]){
+        for(const [dx,dy] of PLANT_CHECK_NEIGH){
           if(this.get(x+dx,y+dy)===T.WATER) nearWater = true;
         }
         if(nearWater && Math.random()<this.params.plantRate){
-          const [dx,dy] = dirs[(Math.random()*dirs.length)|0];
+          const [dx,dy] = PLANT_GROW_DIRS[(Math.random()*PLANT_GROW_DIRS.length)|0];
           if(this.get(x+dx,y+dy)===T.EMPTY){ this.set(x+dx,y+dy,T.PLANT, this.meta[i]); }
         }
+      }
+    }
+  }
+
+  /* Ground-walkers (humans/animals), flyers (birds), and swimmers (fish).
+     Kept intentionally cheap: at most one movement attempt and a short
+     fixed-length neighbor scan per organism per tick, no allocations. */
+  updateLife(x,y,i,type){
+    const def = ELEMENTS[type];
+
+    if(type===T.FISH){
+      let inWater = false;
+      for(const [dx,dy] of NEIGH4){
+        if(this.get(x+dx,y+dy)===T.WATER){ inWater = true; break; }
+      }
+      if(inWater){
+        this.meta[i] = 0;
+        if(Math.random()<0.5){
+          const [dx,dy] = NEIGH4[(Math.random()*NEIGH4.length)|0];
+          const nx=x+dx, ny=y+dy;
+          if(this.inBounds(nx,ny) && !this.moved[this.idx(nx,ny)] && this.get(nx,ny)===T.WATER){
+            this.swap(x,y,nx,ny);
+          }
+        }
+      } else {
+        this.meta[i]++;
+        if(this.meta[i] > 90){ this.set(x,y,T.EMPTY,0); return; }
+        this.moveIfPossible(x,y,this.solidDir,(t)=>t===T.EMPTY,true);
+      }
+      return;
+    }
+
+    if(def.flies){
+      let submerged = false;
+      for(const [dx,dy] of NEIGH4){
+        if(this.get(x+dx,y+dy)===T.WATER){ submerged = true; break; }
+      }
+      if(submerged){
+        this.meta[i]++;
+        if(this.meta[i] > 15){ this.set(x,y,T.EMPTY,0); return; }
+      } else if(this.meta[i]>0){
+        this.meta[i]--;
+      }
+      if(Math.random() < 0.5){
+        const [dx,dy] = NEIGH8[(Math.random()*NEIGH8.length)|0];
+        const nx=x+dx, ny=y+dy;
+        if(this.inBounds(nx,ny) && !this.moved[this.idx(nx,ny)] && this.get(nx,ny)===T.EMPTY){
+          this.swap(x,y,nx,ny);
+        }
+      }
+      return;
+    }
+
+    // ground walker: human or animal
+    const fell = this.moveIfPossible(x,y,this.solidDir,(t)=> t===T.EMPTY,true);
+    if(fell) return;
+
+    let touchingWater = 0;
+    for(const [dx,dy] of NEIGH4){
+      if(this.get(x+dx,y+dy)===T.WATER) touchingWater++;
+    }
+    if(touchingWater >= 3){
+      this.meta[i]++;
+      if(this.meta[i] > 70){ this.set(x,y,T.EMPTY,0); return; }
+    } else if(this.meta[i]>0){
+      this.meta[i]--;
+    }
+
+    if(def.eatsPlants){
+      for(const [dx,dy] of NEIGH4){
+        const nx=x+dx, ny=y+dy;
+        if(this.get(nx,ny)===T.PLANT && Math.random()<0.03){ this.set(nx,ny,T.EMPTY,0); break; }
+      }
+    }
+
+    if(Math.random() < 0.15){
+      const dx = Math.random()<0.5 ? 1 : -1;
+      const nx = x+dx;
+      if(this.inBounds(nx,y) && !this.moved[this.idx(nx,y)] && this.get(nx,y)===T.EMPTY){
+        this.swap(x,y,nx,y);
       }
     }
   }
@@ -715,6 +879,8 @@ class Sim {
   updateSpecial(x,y,i,type){
     if(type===T.TNT){ return; }
     if(type===T.BLACKHOLE){
+      // heavy O(R^2) pull scan — only run every other tick to halve its cost
+      if(this.tick % 2 !== 0) return;
       const R = 14;
       for(let dy=-R;dy<=R;dy++){
         for(let dx=-R;dx<=R;dx++){
@@ -742,11 +908,11 @@ class Sim {
     } else if(type===T.WHITEHOLE){
       this.meta[i]++;
       if(this.meta[i] % 6 === 0){
-        const neigh = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]];
-        const [dx,dy] = neigh[(Math.random()*neigh.length)|0];
+        const [dx,dy] = NEIGH8[(Math.random()*NEIGH8.length)|0];
         const nx=x+dx, ny=y+dy;
         if(this.inBounds(nx,ny) && this.get(nx,ny)===T.EMPTY){ this.set(nx,ny, this.emitterTarget); }
       }
+      if(this.tick % 2 !== 0) return;
       const R = 6;
       for(let dy=-R;dy<=R;dy++){
         for(let dx=-R;dx<=R;dx++){
@@ -776,10 +942,12 @@ class Renderer {
   constructor(sim, canvas){
     this.sim = sim;
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    // alpha:false and desynchronized hints let the browser skip
+    // unnecessary compositing work — a small but free win on low-power GPUs.
+    this.ctx = canvas.getContext('2d', { alpha:false, desynchronized:true });
     this.off = document.createElement('canvas');
     this.off.width = sim.w; this.off.height = sim.h;
-    this.offCtx = this.off.getContext('2d');
+    this.offCtx = this.off.getContext('2d', { alpha:false });
     this.imgData = this.offCtx.createImageData(sim.w, sim.h);
     this.ctx.imageSmoothingEnabled = false;
   }
@@ -818,15 +986,49 @@ class Renderer {
 /* =========================================================================
    APP / UI WIRING
    ========================================================================= */
-const GRID_W = 200, GRID_H = 150, SCALE = 4;
+const GRID_PRESETS = {
+  small:  { w:120, h:90  },
+  medium: { w:160, h:120 },
+  large:  { w:200, h:150 },
+};
+const SCALE = 4;
+
 const canvas = document.getElementById('view');
-canvas.width = GRID_W*SCALE;
-canvas.height = GRID_H*SCALE;
 
-const sim = new Sim(GRID_W, GRID_H);
-const renderer = new Renderer(sim, canvas);
+// Auto-detect modest hardware (typical of Chromebooks) and start at a
+// lighter preset / fps cap by default. Users can always override both.
+const isLowPower = !!(navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4);
+let currentPreset = isLowPower ? 'small' : 'medium';
 
-for(let x=0;x<GRID_W;x++){ sim.set(x, GRID_H-1, T.WALL); }
+let sim, renderer;
+
+function addFloor(){
+  for(let x=0;x<sim.w;x++) sim.set(x, sim.h-1, T.WALL);
+}
+
+function initSim(presetKey){
+  currentPreset = presetKey;
+  const { w, h } = GRID_PRESETS[presetKey];
+  const prev = sim;
+  sim = new Sim(w, h);
+  if(prev){
+    sim.gravAngle = prev.gravAngle;
+    sim.gravStrength = prev.gravStrength;
+    sim.zeroG = prev.zeroG;
+    sim.wind = prev.wind;
+    sim.heat = prev.heat;
+    sim.rain = prev.rain;
+    sim.emitterTarget = prev.emitterTarget;
+    sim.params = { ...prev.params };
+    sim.paused = prev.paused;
+  }
+  canvas.width = w*SCALE;
+  canvas.height = h*SCALE;
+  renderer = new Renderer(sim, canvas);
+  addFloor();
+  document.getElementById('gridOut').textContent = w+'x'+h;
+}
+initSim(currentPreset);
 
 let selectedElement = T.SAND;
 let brushSize = 3;
@@ -876,7 +1078,7 @@ document.getElementById('btnErase').addEventListener('click', (e)=>{
 });
 document.getElementById('btnClear').addEventListener('click', ()=>{
   sim.clearAll();
-  for(let x=0;x<GRID_W;x++) sim.set(x, GRID_H-1, T.WALL);
+  addFloor();
 });
 const btnPause = document.getElementById('btnPause');
 btnPause.addEventListener('click', ()=>{
@@ -969,13 +1171,34 @@ document.getElementById('blastRadius').addEventListener('input', (e)=>{
   document.getElementById('blastRadiusOut').textContent = e.target.value;
 });
 
+/* --- Performance controls --- */
+const gridSizeSelect = document.getElementById('gridSizeSelect');
+gridSizeSelect.value = currentPreset;
+gridSizeSelect.addEventListener('change', ()=>{
+  initSim(gridSizeSelect.value);
+});
+
+let fpsCapInterval = 0;
+const fpsCapSelect = document.getElementById('fpsCapSelect');
+fpsCapSelect.value = isLowPower ? '30' : '0';
+fpsCapInterval = fpsCapSelect.value !== '0' ? 1000/parseInt(fpsCapSelect.value,10) : 0;
+fpsCapSelect.addEventListener('change', ()=>{
+  const v = parseInt(fpsCapSelect.value,10);
+  fpsCapInterval = v>0 ? 1000/v : 0;
+});
+
+const perfNote = document.getElementById('perfNote');
+perfNote.textContent = isLowPower
+  ? 'detected a modest CPU — started at a lighter grid size and a 30fps cap for smoother performance.'
+  : 'tip: drop to "small" grid and 30fps cap for the smoothest experience on lightweight laptops.';
+
 let painting = false;
 let paintErase = false;
 
 function canvasToGrid(clientX, clientY){
   const rect = canvas.getBoundingClientRect();
-  const px = (clientX-rect.left) / rect.width * GRID_W;
-  const py = (clientY-rect.top) / rect.height * GRID_H;
+  const px = (clientX-rect.left) / rect.width * sim.w;
+  const py = (clientY-rect.top) / rect.height * sim.h;
   return { x: px|0, y: py|0 };
 }
 
@@ -1015,14 +1238,22 @@ window.addEventListener('keyup', e=>{
   if(e.key==='e' || e.key==='E'){ paintErase = false; }
 });
 
-document.getElementById('gridOut').textContent = GRID_W+'x'+GRID_H;
 const fpsOut = document.getElementById('fpsOut');
 const activeOut = document.getElementById('activeOut');
+const popOut = document.getElementById('popOut');
 const tickOut = document.getElementById('tickOut');
 let lastTime = performance.now();
 let frameCount = 0, fpsAccum = 0;
+let lastFrameTime = 0;
+let rafId = null;
 
 function loop(now){
+  if(fpsCapInterval > 0 && now - lastFrameTime < fpsCapInterval){
+    rafId = requestAnimationFrame(loop);
+    return;
+  }
+  lastFrameTime = now;
+
   const dt = now - lastTime;
   lastTime = now;
   frameCount++;
@@ -1041,11 +1272,26 @@ function loop(now){
 
   renderer.draw();
   activeOut.textContent = sim.activeCount;
+  popOut.textContent = sim.population;
   tickOut.textContent = sim.tick;
 
-  requestAnimationFrame(loop);
+  rafId = requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
+
+// Stop the loop entirely while the tab is hidden — this avoids wasted
+// CPU/battery in background tabs, which matters a lot on battery-limited
+// Chromebooks.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){
+    if(rafId){ cancelAnimationFrame(rafId); rafId = null; }
+  } else if(!rafId){
+    lastTime = performance.now();
+    lastFrameTime = 0;
+    rafId = requestAnimationFrame(loop);
+  }
+});
+
+rafId = requestAnimationFrame(loop);
 </script>
 </body>
 </html>
